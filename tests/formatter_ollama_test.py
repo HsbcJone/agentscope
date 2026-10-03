@@ -2,6 +2,9 @@
 """Comprehensive formatter unit tests for OllamaChatFormatter and
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
@@ -15,6 +18,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -779,3 +783,44 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(tool_messages[0]["tool_name"], "get_capital")
         # The OpenAI-style tool_call_id must NOT be emitted for Ollama.
         self.assertNotIn("tool_call_id", tool_messages[0])
+
+    async def test_chat_formatter_percent_encoded_local_file_url(
+        self,
+    ) -> None:
+        """Chat formatter reads plain and percent-encoded local file URLs."""
+        await self._assert_local_file_images(OllamaChatFormatter())
+
+    async def test_multiagent_formatter_percent_encoded_local_file_url(
+        self,
+    ) -> None:
+        """Multi-agent formatter reads plain and percent-encoded file URLs."""
+        await self._assert_local_file_images(OllamaMultiAgentFormatter())
+
+    async def _assert_local_file_images(
+        self,
+        fmt: OllamaChatFormatter | OllamaMultiAgentFormatter,
+    ) -> None:
+        """Format local images whose URIs come from ``Path.as_uri()``.
+
+        A filename with a space is percent-encoded (``%20``). Both that
+        URI and a plain filename must yield the file's base64 contents.
+        """
+        payload = b"ollama-local-image"
+        expected = base64.b64encode(payload).decode("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            for filename in ("image.png", "a b.png"):
+                path = Path(directory) / filename
+                path.write_bytes(payload)
+                url = path.as_uri()
+                source = URLSource(url=url, media_type="image/png")
+                if filename == "a b.png":
+                    # URLSource keeps the percent-encoding. The formatter
+                    # has to decode it before opening the file.
+                    self.assertIn("%20", url)
+                    self.assertIn("%20", str(source.url))
+                msg = UserMsg(
+                    name="user",
+                    content=[DataBlock(source=source)],
+                )
+                result = await fmt.format([msg])
+                self.assertEqual(result[0]["images"], [expected])

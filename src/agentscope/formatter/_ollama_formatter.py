@@ -4,6 +4,7 @@ import base64
 import fnmatch
 from abc import ABC
 from typing import Any
+from urllib.parse import unquote
 
 import requests
 from pydantic import Field
@@ -71,6 +72,10 @@ class _OllamaFormatterBase(FormatterBase, ABC):
     def _format_image_source(source: URLSource | Base64Source) -> str:
         """Format an image source into Ollama API format (base64 string).
 
+        Local ``file://`` URLs are percent-decoded before opening.
+        ``Path.as_uri()`` encodes spaces as ``%20``; opening that encoded
+        path raises ``FileNotFoundError`` even when the file exists.
+
         Args:
             source (`URLSource | Base64Source`):
                 The image source to format.
@@ -84,8 +89,8 @@ class _OllamaFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url = str(source.url)
             if url.startswith("file://"):
-                # Local file - read and convert to base64
-                file_path = url.removeprefix("file://")
+                # Local file - decode the URI path, then read as base64.
+                file_path = unquote(url.removeprefix("file://"))
                 with open(file_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
                 return data
